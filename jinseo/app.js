@@ -29,7 +29,7 @@ app.get("/ping", async(req, res) => {
 })
 module.exports = { appDataSource} ;
 const { signUp } = require('./services/userService');
-const { allpostView, usersPost, createPost} = require('./services/postService');
+const { allpostView, usersPost, createPost, updatePost} = require('./services/postService');
 
 // 2. 우리의 Express app에 회원가입 하는 함수 연결
 // 2-1. HTTP method와 HTTP url 같이 설정 하여 연결
@@ -37,6 +37,7 @@ app.post("/users/sign-up", signUp)
 app.get("/userPost",usersPost);
 app.get("/allposts",allpostView);  
 app.post("/posts/create-post",createPost);
+app.put("/posts/:postId", updatePost);
 
 
 const server = http.createServer(app) // express app 으로 서버를 만듭니다.
