@@ -4,7 +4,8 @@ const { DataSource } = require('typeorm')
 const dotenv = require("dotenv")
 const mysql = require('mysql2')
 const { create } = require('domain')
-
+const bcrypt = require("bcrypt");
+const jwt = require('jsonwebtoken');
 
 dotenv.config()
 
@@ -28,12 +29,13 @@ app.get("/ping", async(req, res) => {
   )
 })
 module.exports = { appDataSource} ;
-const { signUp } = require('./services/userService');
+const { signUp,login } = require('./services/userService');
 const { allpostView, usersPost, createPost, updatePost} = require('./services/postService');
 
 // 2. 우리의 Express app에 회원가입 하는 함수 연결
 // 2-1. HTTP method와 HTTP url 같이 설정 하여 연결
-app.post("/users/sign-up", signUp)
+app.post("/users/sign-up", signUp);
+app.post("/users/login",login);
 app.get("/userPost",usersPost);
 app.get("/allposts",allpostView);  
 app.post("/posts/create-post",createPost);
@@ -44,7 +46,7 @@ const server = http.createServer(app) // express app 으로 서버를 만듭니�
 
 const start = async () => { // 서버를 시작하는 함수입니다.
   try {
-    server.listen(8000, () => console.log(`서 버 열 렸 다`))
+    server.listen(8000, () => console.log(`WELCOME-50-1st-D-SERVER!`))
     
     appDataSource.initialize()
     .then(() => {
@@ -52,6 +54,7 @@ const start = async () => { // 서버를 시작하는 함수입니다.
     })
   } catch (err) { 
     console.error(err)
+
   }
 }
 
