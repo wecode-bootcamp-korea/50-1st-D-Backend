@@ -1,143 +1,363 @@
 const { appDataSource } = require('../app');
-//게시글 등록 코드 by.진서
-const createPost = async(req,res) => {
-  const postTitle = req.body.title
-  const postContent = req.body.content
-  const userID = req.body.user_id
+const dotenv = require('dotenv');
+const jwt = require('jsonwebtoken');
 
-  const postData = await appDataSource.query(`
-  INSERT INTO posts (
-    title,
-    content,
-    user_id
-  )
-  VALUES (
-    '${postTitle}',
-    '${postContent}',
-    '${userID}'
-  )
-  `)
-  console.log("TYPEORM RETURN DATA: ",postData);
-  return res.status(201).json({"message":"게시글을 쓰셨군요 ㅎㅎ"})
-}
+dotenv.config();
 
-//전체 게시글 조회하기
-const allpostView = async(req,res) => {
-
-const allPost = await appDataSource.query(`
-  SELECT users.id AS userId, users.profile_image AS userProfileImage, 
-       posts.id AS postingId, posts.content AS postingContent
-  FROM users
-  INNER JOIN posts ON users.id = posts.user_id;
-  `)
- 
-  console.log("TYPEORM RETURN DATA");
-  return res.status(200).json({ data :allPost});
-  
-  }
-
-//특정 유저 게시글 조회
-const usersPost = async(req,res) => {
-    const userID = req.body.user_id;
-  
-    const userPost = await appDataSource.query(`
-    SELECT 
-    users.id AS userId, 
-    users.profile_image AS userProfileImage, 
-    posts.id AS postingId, 
-    posts.content AS postingContent
-    FROM users
-    INNER JOIN posts ON users.id = posts.user_id
-    WHERE users.id = ${userID};
-    `)
-    const result = {
-      data: {
-          userId: userPost[0].userId,
-          userProfileImage: userPost[0].userProfileImage,
-          postings: []
-      }
+//전체 쓰레드 구경해보자
+const showThread = async(req,res)=>{
+  try{
+    const getThread = await appDataSource.query(`
+        SELECT
+        users.nickname,
+        users.profile_image AS profileImage,
+        threads.id AS threadId,
+        threads.content,
+        threads.created_at AS createdAt,
+        threads.updated_at AS updatedAt,
+        COUNT(thread_comments.id) AS commentCount
+        FROM threads
+        INNER JOIN users ON threads.user_id = users.id
+        LEFT JOIN thread_comments ON threads.id = thread_comments.thread_id
+        GROUP BY threads.id, users.nickname, users.profile_image, threads.content, threads.created_at, threads.updated_at
+        ORDER BY threads.created_at DESC;
+        `) 
+   
+    return res.status(200).json({
+      "message":"ALL_THREAD_SUCCESS",
+      data:getThread
+    });
+     
+  } catch(err){
+    return res.status(400).json({ error: "오류가 발생했어"});
   };
-    for (const row of userPost) {
-      result.data.postings.push({
-          postingId: row.postingId,
-          postingContent: row.postingContent
-      });
-  }
+};
 
-    console.log("TYPEORM RETURN DATA");
+//특정 쓰레드 구경해보자
+const getThread = async(req, res) => {
+  const threadId = req.params.threadId;
 
-    return res.status(200).json(result);
+  try {
+    // 해당 쓰레드 가져오기
+    const threadQuery = `
+      SELECT threads.id AS threadId, threads.content, threads.created_at AS createdAt, 
+      threads.updated_at AS updatedAt, users.nickname, users.profile_image AS profileImage
+      FROM threads
+      INNER JOIN users ON threads.user_id = users.id
+      WHERE threads.id = ${threadId}
+    `;
+
+    const thread = await appDataSource.query(threadQuery);
+
+    if (thread.length === 0) {
+      return res.status(404).json({ message: "THREAD_UNDEFINED" });
+    }
+
+    // 해당 쓰레드의 댓글 가져오기
+    const commentsQuery = `
+      SELECT thread_comments.id AS commentId, thread_comments.content AS commentContent, thread_comments.created_at AS commentCreatedAt, 
+      thread_comments.updated_at AS commentUpdatedAt, users.nickname AS commentNickname, users.profile_image AS commentProfileImage
+      FROM thread_comments
+      INNER JOIN users ON thread_comments.user_id = users.id
+      WHERE thread_comments.thread_id = ${threadId}
+    `;
+
+    const comments = await appDataSource.query(commentsQuery);
+
+    return res.status(200).json({
+      message: "GET_THREAD_SUCCESS",
+      data: {
+        thread: thread[0],
+        comments: comments
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ message: "오류가 발생했어" });
+  };
+}
+//쓰레드 남기기
+const createThread = async(req,res) =>{
+  try{
+    const token = req.headers.authorization;
+    console.log(token);
+    //토큰이 있는 경우 유효성 검사해봅시다.
+    const id = jwt.verify(token, process.env.SECRET_KEY);
+    const userId = id.id;
+    //입력한 쓰레드 내용 받아오기 (한 글자 이상 조건)
+    const content = req.body.content;
+    //글자수 제한을 어겼을때 오류메시지
+    if (content.length<=1){
+      return res.status(400).json({ error: "CONTENT_TOO_SHORT" });
+    };
+    //쓰레드 데이터베이스 저장하자 (애초에 토큰을 id + SECRE_KEY 로 만들어서 유효성 검사후에 변수 id 엔 id가 남는다.)
+    const newThread = await appDataSource.query(`
+    INSERT INTO threads (
+        user_id,
+        content
+    ) VALUES (
+        '${userId}',
+        '${content}'
+    );
+    `)
+    //백엔드 확인용
+    console.log("New Thread userID: ", userId);
+    console.log("New Thread Content: ",content);
+
+    //front에 성공메시지 보내주기
+    return res.status(200).json({"message":"NEW_THREAD_CREATED"});
+  } catch(err) {
+     //토큰 값이 틀린 경우
+     if (err.name === 'JsonWebTokenError') {
+      return res.status(400).json({ error: "잘못된 토큰입니다." });
+    }
+    return res.status(400).json({ error: "오류가 발생했어"});
+  };
+};
+
+//쓰레드 수정해보자
+const updateThread = async(req,res)=>{
+  const threadId = req.params.threadId;
+  const { content } = req.body;
+ 
+  const token = req.headers.authorization;
+  
+    try {
+    const id = jwt.verify(token, process.env.SECRET_KEY);
+    const userId = id.id;
+    //게시물 존재여부 확인
+    const existingThread =await appDataSource.query(`
+      SELECT id, user_id
+      FROM threads
+      WHERE id = ${threadId}
+    `);
+
+    if (existingThread.length === 0) {
+      return res.status(404).json({ message: "THREAD_NOT_FOUND" });
+    }
     
-  }
-
- //게시글 수정(Update)하기
- const updatePost = async (req,res) =>{
-  //1-1 Request로부터 필요한 데이터들을 받아오자
-  const postId = req.params.postId;
-  const title = req.body.title;
-  const content = req.body.content;
-  const userId = req.body.userId;
-
-  //1-2. 데이터베이스 상에서 게시물 데이터를 수정단계
-    //1-2-1. 수정하려는 게시물의 존재 여부 확인단계
-    const existingPost = await appDataSource.query(`
-    SELECT id,title,content,user_id
-    FROM posts
-    WHERE id = ${postId};
+    //유저 존재 여부 확인
+    const existingUser = await appDataSource.query(`
+    SELECT id
+    FROM users
+    WHERE id = ${userId}
     `);
     
-    // 게시물이 없는 경우의 코드를 작성하자 -> 오류 방지
-    if(existingPost.length===0){ //existingPost 가 빈 상태에 실행되는 코드 -> 비었다는건 존재하지 않는 다는 거니까
-      return res.status(404).json({"message":"POST_NOT_FOUND"});
+    if (existingUser.length === 0) {
+      return res.status(401).json({ message: "UNAUTHORIZED" });
     }
-    //게시물이 있는 경우 수정단계 코드로 넘어가면 되니 추가적으로 작성 할 코드 없음
-
-  //1-2-2. 게시물 확인 단계 이후 수정하려는 사람의 존재여부를 판단하는 단계
-    const existingUser = await appDataSource.query(`
-    SELECT id,email
-    FROM users
-    WHERE id= ${userId};
-    `)
-
-    //게시글과 마찬가지로 유저의 존재여부 확인단계 -> 존재하지 않는 경우 오류방지를 위해 코드 작성하자
-    if(existingUser.length===0){
-      return res.status(401).json({"message":"UNAUTHORIZED"});
-    }
-    //유저가 있는 경우는 게시글과 마찬가지로 그 다음 단계로 진행하면 된다.
-
-  //1-2-3. 게시글, 유저의 존재여부를 확인 했으니 해당 게시글의 작성자가 맞는지 확인하는 단계
-  const postingUser = existingPost[0].user_id;
-  const user = existingUser[0].id;
-    //권한이 없는 사람이 접근한 경우 -> 권한이 없다고 답변
-    if(postingUser!==user){
-      return res.status(403).json({"message":"잘못된 접근입니다. UNAUTHENTICATED"});
-    };
-    //권한이 일치하는 사람인 경우 -> 포스터 수정 코드 실행
-    const updatedPost = await appDataSource.query(`
-      UPDATE posts
-      SET title = '${title}',
-          content = '${content}'
-      WHERE id = ${postId}    
-    `)
-  
-  //1-3. 데이터 수정되었는지 확인
-  console.log("수정: ","UPDATED POST");
-  
-  //1-4. front에게 수정되었다고 전달 -> 요즘엔 내용도 같이 보내주는 편
-  return res.status(200).json({
-    "message":"POST_UPDATED",
-    "updatedData":{
-      "title":title,
-      "content":content
-    }
-  })
-};
     
+    // 3. 게시물 작성자 확인
+    const postingUser = existingThread[0].user_id;
+    const user = existingUser[0].id;
 
+    if (postingUser !== user) {
+      return res.status(403).json({ message: "UNAUTHENTICATED" });
+    };
+    // 4. 게시물 수정
+    await appDataSource.query(`
+    UPDATE threads
+    SET content = '${content}'
+    WHERE id = ${threadId}
+    `);
+
+    // 5. 응답 보내기
+    return res.status(200).json({
+      message: "THREAD_UPDATED",
+      updatedData: {
+      content,
+      },
+});
+
+  } catch (error) {
+     //토큰 값이 틀린 경우
+     if (err.name === 'JsonWebTokenError') {
+      return res.status(400).json({ error: "잘못된 토큰입니다." });
+    };
+    return res.status(500).json({ message: "오류가 발생했어!" });
+    };
+
+};
+
+//쓰레드 삭제해보자
+const deleteThread = async(req, res) => {
+  const threadId = req.params.threadId;
+  const token = req.headers.authorization;
+  try {
+    // 토큰 유효성 검사
+    const id = jwt.verify(token, process.env.SECRET_KEY);
+    const userId = id.id;
+
+    // 쓰레드 존재유무 파악하자
+    const existingThread = await appDataSource.query(`
+      SELECT id, user_id
+      FROM threads
+      WHERE id = ${threadId};
+    `)
+    // 쓰레드 존재하지 않을 때
+    if (existingThread.length === 0) {
+      return res.status(400).json({ message: "쓰레드가 존재하지 않습니다" });
+    };
+    // 쓰레드 작성자와 토큰의 사용자가 일치하는지 확인 후 일치하지 않은 경우
+    if (existingThread[0].user_id !== userId) {
+      return res.status(400).json({ message: "잘못된 접근입니다" });
+    }
+    // 쓰레드 삭제 실행
+    await appDataSource.query(`
+      DELETE FROM threads
+      WHERE id = ${threadId}
+    `)
+    return res.status(200).json({ message: "THREAD_DELETE_SUCCESS" });
+
+  } catch (err) {
+    // 토큰 유효성 검사 통과 못했을시
+    if (err.name === 'JsonWebTokenError') {
+      return res.status(400).json({ error: "잘못된 토큰입니다." });
+    };
+    return res.status(500).json({ message: "오류가 발생했습니다." });
+  }
+};
+
+//댓글을 달아보자
+const commentThread = async(req,res)=>{
+  const threadId = req.params.threadId;
+  const { content } = req.body;
+
+  const token = req.headers.authorization;
+  if (!token) {
+    return res.status(400).json({ error: "저장된 토큰이 없습니다." });
+  }
+
+  try{
+    const id = jwt.verify(token, process.env.SECRET_KEY);
+    const userId =id.id;
+    //댓글 작성자 존재여부 확인
+    const existingUser = await appDataSource.query(`
+    SELECT id
+    FROM users
+    WHERE id = ${userId}
+    `);
+    if (existingUser.length === 0) {
+      return res.status(401).json({ message: "UNAUTHORIZED" });
+    }
+
+    //댓글 작성 가보자
+    const newComment = await appDataSource.query(`
+    INSERT INTO thread_comments (
+      thread_id,
+      user_id,
+      content
+    ) VALUES (
+      '${threadId}',
+      '${id.id}',
+      '${content}'
+    );
+    `)
+
+    //백엔드 확인용
+    console.log("NEW COMMENT CONTENT : ",newComment);
+    return res.status(200).json({
+      "message":"NEW_COMMENT_REGISTERED"
+    });
+  }catch(err) {
+     //토큰 값이 틀린 경우
+     if (err.name === 'JsonWebTokenError') {
+      return res.status(400).json({ error: "잘못된 토큰입니다." });
+    }
+    return res.status(500).json({ message: "오류가 발생했어!" });
+    };
+};
+
+//쓰레드 좋아요
+const likeThread = async(req,res)=>{
+  const threadId = req.params.threadId;
+  const token = req.headers.authorization;
+
+  try{
+    //유효성 검사 해보자
+    const id = jwt.verify(token, process.env.SECRET_KEY);
+    const userId = id.id;
+    
+    //이미 좋아요 했는지 확인단계
+    const existingLike= await appDataSource.query(`
+    SELECT id FROM thread_Likes
+    WHERE user_id = ${userId} AND thread_id = ${threadId};
+    `);
+    //이미 좋아요 했을때  
+    if(existingLike.length > 0){
+      return res.status(400).json({"message":"이미 좋아요를 했습니다."});
+    }
+
+    //좋아요 테이블에 데이터 추가해주자
+    await appDataSource.query(`
+      INSERT INTO thread_likes (
+        user_id,
+        thread_id,
+        created_at
+      ) VALUES (
+        '${userId}',
+        '${threadId}',
+        NOW()
+      );
+    `);
+
+    return res.status(200).json({ message: "THREAD_LIKE_SUCCESS" });
+
+  } catch(err){
+    //토큰 값이 틀린 경우
+    if (err.name === 'JsonWebTokenError') {
+      return res.status(400).json({ error: "잘못된 토큰입니다." });
+    }
+
+    return res.status(500).json({ message: "오류가 발생했습니다!" });
+  };
+};
+
+//쓰레드 좋아요 취소
+const unlikeThread = async(req,res)=>{
+  const threadId = req.params.threadId;
+  const token = req.headers.authorization;
+  try{
+    //토큰 유효성 검사.
+    const id = jwt.verify(token, process.env.SECRET_KEY);
+    const userId = id.id;
+
+    //이미 눌렀는지 확인해보자
+    const existingLike = await appDataSource.query(`
+      SELECT id
+      FROM thread_likes
+      WHERE user_id = ${userId} AND thread_id = ${threadId};
+    `);
+    //좋아요 누르지 않은 게시물인 경우 오류 전달
+    if (existingLike.length === 0) {
+      return res.status(400).json({ message: "아직 좋아요를 하지 않았습니다." });
+    };
+
+    // 좋아요 취소
+    await appDataSource.query(`
+      DELETE FROM thread_likes
+      WHERE user_id=${userId} AND thread_id = ${threadId}
+    `)
+    return res.status(200).json({ message: "CANCEL_LIKE_SUCCESS" });
+
+  }catch(err){
+    //토큰 값이 틀린 경우
+    if (err.name === 'JsonWebTokenError') {
+      return res.status(400).json({ error: "잘못된 토큰입니다." });
+    }
+    return res.status(500).json({ message: "오류가 발생했습니다!" });
+  };
+
+
+
+};
   //함수 내보내주자
   module.exports = {
-    allpostView, 
-    usersPost, 
-    createPost,
-    updatePost
-  };
+    getThread,
+    createThread,
+    showThread,
+    updateThread,
+    commentThread,
+    likeThread,
+    unlikeThread,
+    deleteThread
+    };
